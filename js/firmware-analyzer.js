@@ -254,10 +254,37 @@ class FirmwareAnalyzer {
                 // Classify certificate type
                 let certType = "Unknown";
                 if (decryptedStr.includes("BEGIN CERTIFICATE")) {
-                    if (decryptedStr.includes("Amazon Root CA") || decryptedStr.includes("Amazon")) {
-                        certType = "Root CA Certificate";
+                    // Extract Subject and Issuer for proper classification
+                    const subjectMatch = decryptedStr.match(/Subject:\s*([^\n\r]+)/);
+                    const issuerMatch = decryptedStr.match(/Issuer:\s*([^\n\r]+)/);
+                    
+                    if (subjectMatch && issuerMatch) {
+                        const subject = subjectMatch[1].trim();
+                        const issuer = issuerMatch[1].trim();
+                        
+                        // Check if it's a Root CA (self-signed: Subject = Issuer)
+                        if (subject === issuer && (subject.includes("Root CA") || subject.includes("Amazon Root CA"))) {
+                            certType = "Root CA Certificate";
+                        }
+                        // Check if it's an Amazon Root CA even if not self-signed
+                        else if (subject.includes("Amazon Root CA") || subject.includes("Root CA")) {
+                            certType = "Root CA Certificate"; 
+                        }
+                        // Check for device certificates
+                        else if (subject.includes("amazonaws.com") || subject.includes("iot.")) {
+                            certType = "Device Certificate";
+                        }
+                        // Default to device certificate for other certs
+                        else {
+                            certType = "Device Certificate";
+                        }
                     } else {
-                        certType = "Device Certificate";
+                        // Fallback to simple string matching if regex fails
+                        if (decryptedStr.includes("Amazon Root CA") || decryptedStr.includes("Root CA")) {
+                            certType = "Root CA Certificate";
+                        } else {
+                            certType = "Device Certificate";
+                        }
                     }
                 } else if (decryptedStr.includes("BEGIN RSA PRIVATE KEY") || decryptedStr.includes("BEGIN PRIVATE KEY")) {
                     certType = "Private Key";
