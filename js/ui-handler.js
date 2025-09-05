@@ -348,26 +348,43 @@ function showError(message) {
 }
 
 function getKeyMatchDisplay(cert) {
-    if (!cert.keyMatch) {
-        return '';
+    let html = '';
+    
+    // Key matching information
+    if (cert.keyMatch) {
+        if (cert.type === "Private Key") {
+            if (cert.keyMatch.matched) {
+                html += `<strong>Key Match:</strong> <span class="text-success">✓ Matches Certificate ${cert.keyMatch.certificateIndex}</span><br>`;
+            } else if (cert.keyMatch.error) {
+                html += `<strong>Key Match:</strong> <span class="text-warning">⚠ Verification Error</span><br>`;
+            } else {
+                html += `<strong>Key Match:</strong> <span class="text-danger">✗ No matching certificate found</span><br>`;
+            }
+        } else {
+            // For certificates
+            if (cert.keyMatch.matched) {
+                html += `<strong>Private Key:</strong> <span class="text-success">✓ Matches Private Key ${cert.keyMatch.privateKeyIndex}</span><br>`;
+            } else {
+                html += `<strong>Private Key:</strong> <span class="text-muted">No matching private key</span><br>`;
+            }
+        }
     }
     
-    if (cert.type === "Private Key") {
-        if (cert.keyMatch.matched) {
-            return `<strong>Key Match:</strong> <span class="text-success">✓ Matches Certificate ${cert.keyMatch.certificateIndex}</span><br>`;
-        } else if (cert.keyMatch.error) {
-            return `<strong>Key Match:</strong> <span class="text-warning">⚠ Verification Error</span><br>`;
-        } else {
-            return `<strong>Key Match:</strong> <span class="text-danger">✗ No matching certificate found</span><br>`;
-        }
-    } else {
-        // For certificates
-        if (cert.keyMatch && cert.keyMatch.matched) {
-            return `<strong>Private Key:</strong> <span class="text-success">✓ Matches Private Key ${cert.keyMatch.privateKeyIndex}</span><br>`;
-        } else {
-            return `<strong>Private Key:</strong> <span class="text-muted">No matching private key</span><br>`;
+    // Certificate chain information
+    if (cert.chainInfo && cert.type !== "Private Key") {
+        if (cert.chainInfo.isRoot) {
+            html += `<strong>Certificate Chain:</strong> <span class="text-primary">🏛️ Root Certificate (Self-signed)</span><br>`;
+            if (cert.chainInfo.issuesOtherCerts) {
+                html += `<strong>Issues:</strong> <span class="text-info">Other certificates in this set</span><br>`;
+            }
+        } else if (cert.chainInfo.issuedBy) {
+            html += `<strong>Certificate Chain:</strong> <span class="text-success">📋 Issued by Certificate ${cert.chainInfo.issuedBy}</span><br>`;
+        } else if (cert.chainInfo.issuerType === "External") {
+            html += `<strong>Certificate Chain:</strong> <span class="text-warning">🌐 Issued by external CA</span><br>`;
         }
     }
+    
+    return html;
 }
 
 function escapeHtml(text) {

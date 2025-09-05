@@ -251,50 +251,10 @@ class FirmwareAnalyzer {
             if (decrypted) {
                 const decryptedStr = new TextDecoder('utf-8', { fatal: false }).decode(decrypted);
                 
-                // Classify certificate type
+                // Initial classification - will be refined by certificate chain analysis
                 let certType = "Unknown";
                 if (decryptedStr.includes("BEGIN CERTIFICATE")) {
-                    // Extract Subject and Issuer for proper classification
-                    const subjectMatch = decryptedStr.match(/Subject:\s*([^\n\r]+)/);
-                    const issuerMatch = decryptedStr.match(/Issuer:\s*([^\n\r]+)/);
-                    
-                    if (subjectMatch && issuerMatch) {
-                        const subject = subjectMatch[1].trim();
-                        const issuer = issuerMatch[1].trim();
-                        
-                        // Normalize whitespace for comparison
-                        const normalizedSubject = subject.replace(/\s+/g, ' ').trim();
-                        const normalizedIssuer = issuer.replace(/\s+/g, ' ').trim();
-                        
-                        // Check if subject contains Root CA patterns
-                        const isRootCA = subject.includes("Root CA") || subject.includes("Amazon Root CA");
-                        
-                        // Check if it's self-signed (Subject = Issuer) 
-                        const isSelfSigned = normalizedSubject === normalizedIssuer;
-                        
-                        if (isRootCA || (isSelfSigned && subject.includes("Amazon"))) {
-                            certType = "Root CA Certificate";
-                        }
-                        // Check for device certificates
-                        else if (subject.includes("amazonaws.com") || subject.includes("iot.") || subject.includes("AWS IoT")) {
-                            certType = "Device Certificate";
-                        }
-                        // Default based on issuer if subject is unclear
-                        else if (issuer.includes("Amazon Web Services") || issuer.includes("Amazon")) {
-                            certType = "Device Certificate";
-                        }
-                        // Final default
-                        else {
-                            certType = "Device Certificate";
-                        }
-                    } else {
-                        // Fallback to simple string matching if regex fails
-                        if (decryptedStr.includes("Amazon Root CA") || decryptedStr.includes("Root CA")) {
-                            certType = "Root CA Certificate";
-                        } else {
-                            certType = "Device Certificate";
-                        }
-                    }
+                    certType = "Certificate"; // Generic - will be classified later
                 } else if (decryptedStr.includes("BEGIN RSA PRIVATE KEY") || decryptedStr.includes("BEGIN PRIVATE KEY")) {
                     certType = "Private Key";
                 }
@@ -422,6 +382,216 @@ class FirmwareAnalyzer {
     }
 
     /**
+     * Analyze certificate chain and properly classify certificates
+     */
+    analyzeCertificateChain() {
+        try {
+            // Check if node-forge is available
+            if (typeof forge === 'undefined') {
+                console.warn('node-forge not available, using fallback classification');
+                this.fallbackCertificateClassification();
+                return;
+            }
+
+            const certificates = this.decryptedCerts.filter(cert => cert.type === "Certificate");
+            
+            for (const cert of certificates) {
+                try {
+                    const certificate = forge.pki.certificateFromPem(cert.decrypted);
+                    
+                    // Check if it's a root certificate
+                    const isRootCertificate = this.isRootCertificate(certificate);
+                    
+                    if (isRootCertificate) {
+                        cert.type = "Root CA Certificate";
+                        cert.chainInfo = {
+                            isRoot: true,
+                            isSelfSigned: true,
+                            issuesOtherCerts: false
+                        };
+                    } else {
+                        // Check if it's issued by one of our root certificates
+                        const issuer = this.findIssuer(certificate, certificates);
+                        
+                        if (issuer) {
+                            // Mark the issuer as issuing other certificates
+                            if (issuer.chainInfo) {
+                                issuer.chainInfo.issuesOtherCerts = true;
+                            }
+                            
+                            cert.type = "Device Certificate";
+                            cert.chainInfo = {
+                                isRoot: false,
+                                isSelfSigned: false,
+                                issuedBy: issuer.index,
+                                issuerType: issuer.type
+                            };
+                        } else {
+                            // No issuer found in our set
+                            cert.type = "Device Certificate";
+                            cert.chainInfo = {
+                                isRoot: false,
+                                isSelfSigned: false,
+                                issuerType: "External"
+                            };
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.warn(`Error analyzing certificate ${cert.index}:`, error);
+                    // Fallback classification for this certificate
+                    this.fallbackSingleCertificateClassification(cert);
+                }
+            }
+            
+        } catch (error) {
+            console.warn('Error during certificate chain analysis:', error);
+            this.fallbackCertificateClassification();
+        }
+    }
+
+    /**
+     * Check if a certificate is a root certificate
+     */
+    isRootCertificate(certificate) {
+        try {
+            // Check if subject equals issuer (self-signed)
+            const subject = certificate.subject;
+            const issuer = certificate.issuer;
+            
+            // Compare DN attributes
+            if (subject.attributes.length !== issuer.attributes.length) {
+                return false;
+            }
+            
+            for (let i = 0; i < subject.attributes.length; i++) {
+                const subjectAttr = subject.attributes[i];
+                const issuerAttr = issuer.attributes[i];
+                
+                if (subjectAttr.type !== issuerAttr.type || 
+                    subjectAttr.value !== issuerAttr.value) {
+                    return false;
+                }
+            }
+            
+            // Check for CA basic constraints
+            const basicConstraints = certificate.getExtension('basicConstraints');
+            if (basicConstraints && basicConstraints.cA === true) {
+                return true;
+            }
+            
+            // Check for key usage extension indicating CA
+            const keyUsage = certificate.getExtension('keyUsage');
+            if (keyUsage && keyUsage.keyCertSign === true) {
+                return true;
+            }
+            
+            // Fallback: check if subject contains Root CA indicators
+            const subjectCN = subject.getField('CN');
+            if (subjectCN && (subjectCN.value.includes('Root CA') || 
+                             subjectCN.value.includes('Root Certificate Authority'))) {
+                return true;
+            }
+            
+            return true; // If self-signed, likely a root
+            
+        } catch (error) {
+            console.warn('Error checking if certificate is root:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Find the issuer certificate for a given certificate
+     */
+    findIssuer(certificate, certificates) {
+        try {
+            const issuerDN = certificate.issuer;
+            
+            for (const candidateCert of certificates) {
+                try {
+                    const candidateCertificate = forge.pki.certificateFromPem(candidateCert.decrypted);
+                    const candidateSubject = candidateCertificate.subject;
+                    
+                    // Compare DN attributes
+                    if (this.compareDNs(issuerDN, candidateSubject)) {
+                        return candidateCert;
+                    }
+                } catch (error) {
+                    continue;
+                }
+            }
+            
+            return null;
+        } catch (error) {
+            console.warn('Error finding issuer:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Compare two Distinguished Names
+     */
+    compareDNs(dn1, dn2) {
+        if (dn1.attributes.length !== dn2.attributes.length) {
+            return false;
+        }
+        
+        for (let i = 0; i < dn1.attributes.length; i++) {
+            const attr1 = dn1.attributes[i];
+            const attr2 = dn2.attributes[i];
+            
+            if (attr1.type !== attr2.type || attr1.value !== attr2.value) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    /**
+     * Fallback certificate classification using regex
+     */
+    fallbackCertificateClassification() {
+        const certificates = this.decryptedCerts.filter(cert => cert.type === "Certificate");
+        
+        for (const cert of certificates) {
+            this.fallbackSingleCertificateClassification(cert);
+        }
+    }
+
+    /**
+     * Fallback classification for a single certificate
+     */
+    fallbackSingleCertificateClassification(cert) {
+        try {
+            const decryptedStr = cert.decrypted;
+            
+            // Extract Subject and Issuer
+            const subjectMatch = decryptedStr.match(/Subject:\s*([^\n\r]+)/);
+            const issuerMatch = decryptedStr.match(/Issuer:\s*([^\n\r]+)/);
+            
+            if (subjectMatch && issuerMatch) {
+                const subject = subjectMatch[1].trim();
+                const issuer = issuerMatch[1].trim();
+                
+                // Check if self-signed and contains Root CA
+                if (subject === issuer && (subject.includes("Root CA") || subject.includes("Amazon Root CA"))) {
+                    cert.type = "Root CA Certificate";
+                } else if (subject.includes("Root CA") || subject.includes("Amazon Root CA")) {
+                    cert.type = "Root CA Certificate";
+                } else {
+                    cert.type = "Device Certificate";
+                }
+            } else {
+                cert.type = "Device Certificate";
+            }
+        } catch (error) {
+            cert.type = "Device Certificate";
+        }
+    }
+
+    /**
      * Get appropriate filename for certificate type
      */
     getFilename(certType, index) {
@@ -472,6 +642,10 @@ class FirmwareAnalyzer {
             // Step 7: Verify private key matches certificates
             progressCallback(98, "Verifying private key matches...");
             this.verifyPrivateKeyMatches();
+            
+            // Step 8: Analyze certificate chain
+            progressCallback(99, "Analyzing certificate chain...");
+            this.analyzeCertificateChain();
             
             progressCallback(100, "Analysis complete!");
             
