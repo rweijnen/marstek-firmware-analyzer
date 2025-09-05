@@ -101,6 +101,47 @@ function updateProgress(percentage, message) {
     progressText.textContent = message;
 }
 
+// Extended progress callback with firmware info handler
+updateProgress.onFirmwareInfo = function(firmwareInfo) {
+    // Show firmware info section early
+    showSection('resultsSection');
+    
+    // Display just the firmware information
+    const firmwareSection = document.getElementById('firmwareSection');
+    displayFirmwareInfo(firmwareInfo);
+    
+    // Also update summary with firmware info
+    const summarySection = document.getElementById('summarySection');
+    summarySection.innerHTML = `
+        <h6 class="mb-3">Analysis Summary</h6>
+        <div class="summary-stats">
+            <div class="stat-item">
+                <div class="stat-number">Processing...</div>
+                <div class="stat-label">Certificates</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">Processing...</div>
+                <div class="stat-label">AWS Endpoints</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">${firmwareInfo.version || 'N/A'}</div>
+                <div class="stat-label">Firmware Version</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">${firmwareInfo.type || 'Unknown'}</div>
+                <div class="stat-label">Firmware Type</div>
+            </div>
+        </div>
+    `;
+    
+    // Show placeholder for sections that will be populated later
+    const awsSection = document.getElementById('awsSection');
+    awsSection.innerHTML = '<h6 class="mb-3">AWS IoT Endpoints</h6><p class="text-muted">Processing...</p>';
+    
+    const certificatesSection = document.getElementById('certificatesSection');
+    certificatesSection.innerHTML = '<h6 class="mb-3">Extracted Certificates</h6><p class="text-muted">Processing...</p>';
+};
+
 function displayResults(results) {
     displaySummary(results.summary);
     displayFirmwareInfo(results.firmwareInfo);

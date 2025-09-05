@@ -167,14 +167,14 @@ class FirmwareAnalyzer {
         const totalCombinations = this.keyCandidates.length * 94;
         let testCount = 0;
         
-        progressCallback(10, `Testing ${this.keyCandidates.length} key candidates...`);
+        progressCallback(25, `Testing ${this.keyCandidates.length} key candidates...`);
         
         for (let i = 0; i < this.keyCandidates.length; i++) {
             const candidate = this.keyCandidates[i];
             
             // Update progress and yield control every 50 candidates
             if (i % 50 === 0) {
-                const progress = 10 + (i / this.keyCandidates.length) * 70;
+                const progress = 25 + (i / this.keyCandidates.length) * 55; // 25% to 80%
                 progressCallback(progress, `Progress: ${i}/${this.keyCandidates.length} candidates...`);
                 // Yield control to UI thread
                 await new Promise(resolve => setTimeout(resolve, 0));
@@ -210,7 +210,7 @@ class FirmwareAnalyzer {
                     ];
                     
                     if (markers.some(marker => decryptedStr.includes(marker))) {
-                        progressCallback(80, `SUCCESS! Found working key after ${testCount} attempts`);
+                        progressCallback(82, `SUCCESS! Found working key after ${testCount} attempts`);
                         return { key: shiftedKey, shift: shift };
                     }
                 }
@@ -242,7 +242,7 @@ class FirmwareAnalyzer {
         }
         
         for (let i = 0; i < this.certificates.length; i++) {
-            progressCallback(85 + (i / this.certificates.length) * 10, 
+            progressCallback(85 + (i / this.certificates.length) * 5, 
                            `Decrypting certificate ${i + 1}/${this.certificates.length}...`);
             
             const cert = this.certificates[i];
@@ -923,47 +923,53 @@ class FirmwareAnalyzer {
      */
     async analyze(fileData, progressCallback) {
         try {
-            // Step 1: Extract strings
-            progressCallback(5, "Extracting strings...");
+            // Step 1: Extract firmware version information first (quick analysis)
+            progressCallback(5, "Extracting firmware version...");
+            this.firmwareInfo = this.extractFirmwareVersion(new Uint8Array(fileData));
+            
+            // Notify UI of firmware info immediately
+            if (progressCallback.onFirmwareInfo) {
+                progressCallback.onFirmwareInfo(this.firmwareInfo);
+            }
+            
+            // Step 2: Extract strings
+            progressCallback(10, "Extracting strings...");
             this.strings = this.extractStrings(new Uint8Array(fileData));
             
-            // Step 2: Find certificates
-            progressCallback(8, "Finding certificates...");
+            // Step 3: Find certificates
+            progressCallback(15, "Finding certificates...");
             this.certificates = this.findCertificates(this.strings);
             
             if (this.certificates.length === 0) {
                 throw new Error("No Base64 certificate candidates found in firmware");
             }
             
-            // Step 3: Generate key candidates
-            progressCallback(10, "Generating key candidates...");
+            // Step 4: Generate key candidates
+            progressCallback(20, "Generating key candidates...");
             this.keyCandidates = this.generateKeyCandidates(this.strings);
             
-            // Step 4: Brute force key
+            // Step 5: Brute force key (most time-consuming step)
             const keyResult = await this.bruteForceKey(this.certificates[0].data, progressCallback);
             if (!keyResult) {
                 throw new Error("Could not find working AES key");
             }
             this.workingKey = keyResult.key;
             
-            // Step 5: Decrypt all certificates
+            // Step 6: Decrypt all certificates
+            progressCallback(85, "Decrypting all certificates...");
             this.decryptedCerts = this.decryptAllCertificates(this.workingKey, progressCallback);
             
-            // Step 6: Find AWS endpoints
-            progressCallback(95, "Finding AWS IoT endpoints...");
+            // Step 7: Find AWS endpoints
+            progressCallback(92, "Finding AWS IoT endpoints...");
             this.awsEndpoints = this.findAwsEndpoints(this.strings);
             
-            // Step 7: Verify private key matches certificates
-            progressCallback(98, "Verifying private key matches...");
+            // Step 8: Verify private key matches certificates
+            progressCallback(96, "Verifying private key matches...");
             this.verifyPrivateKeyMatches();
             
-            // Step 8: Analyze certificate chain
+            // Step 9: Analyze certificate chain
             progressCallback(99, "Analyzing certificate chain...");
             this.analyzeCertificateChain();
-            
-            // Step 9: Extract firmware version information
-            progressCallback(99.5, "Extracting firmware version...");
-            this.firmwareInfo = this.extractFirmwareVersion(new Uint8Array(fileData));
             
             progressCallback(100, "Analysis complete!");
             
