@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marstek Firmware Analyzer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="css/styles.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <!-- Header -->
+        <div class="row">
+            <div class="col-12 text-center">
+                <h1 class="display-4 mb-4">Marstek Firmware Analyzer</h1>
+                <p class="lead text-muted">Extract certificates and security information from Marstek firmware</p>
+            </div>
+        </div>
+
+        <!-- File Upload Section -->
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Upload Firmware File</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <input type="file" class="form-control" id="firmwareFile" accept=".bin">
+                            <div class="form-text">Select a Marstek firmware .bin file to analyze</div>
+                        </div>
+                        <button type="button" class="btn btn-primary" id="analyzeBtn" disabled>
+                            <span id="analyzeSpinner" class="spinner-border spinner-border-sm d-none" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </span>
+                            Analyze Firmware
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Section -->
+        <div class="row justify-content-center mt-4">
+            <div class="col-md-8">
+                <div id="progressSection" class="d-none">
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="mb-0">Analysis Progress</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="progress mb-2">
+                                <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                            </div>
+                            <div id="progressText" class="text-muted">Ready to start...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="row justify-content-center mt-4">
+            <div class="col-md-10">
+                <div id="resultsSection" class="d-none">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Analysis Results</h5>
+                            <button type="button" class="btn btn-success btn-sm" id="downloadAllBtn">
+                                Download All Certificates
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <!-- Summary -->
+                            <div id="summarySection" class="mb-4"></div>
+                            
+                            <!-- AWS Endpoints -->
+                            <div id="awsSection" class="mb-4"></div>
+                            
+                            <!-- Certificates -->
+                            <div id="certificatesSection"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error Section -->
+        <div class="row justify-content-center mt-4">
+            <div class="col-md-8">
+                <div id="errorSection" class="d-none">
+                    <div class="alert alert-danger" role="alert">
+                        <h6>Analysis Failed</h6>
+                        <div id="errorMessage"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="mt-5 py-4 bg-light">
+            <div class="container text-center">
+                <p class="text-muted mb-0">
+                    Marstek Firmware Analyzer - All analysis is performed locally in your browser
+                </p>
+            </div>
+        </footer>
+    </div>
+
+    <!-- External Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/crypto-js@4.1.1/crypto-js.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/node-forge@1.3.1/dist/forge.min.js"></script>
+    
+    <!-- Application Scripts -->
+    <script src="js/firmware-analyzer.js"></script>
+    <script src="js/crypto-utils.js"></script>
+    <script src="js/certificate-parser.js"></script>
+    <script src="js/ui-handler.js"></script>
+    
+    <script>
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeApp();
+        });
+    </script>
+</body>
+</html>
