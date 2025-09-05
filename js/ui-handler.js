@@ -170,6 +170,7 @@ function displayCertificates(certificates) {
                                 ${certDetails.organization ? `<strong>Organization:</strong> ${escapeHtml(certDetails.organization)}<br>` : ''}
                                 ${certDetails.country ? `<strong>Country:</strong> ${escapeHtml(certDetails.country)}<br>` : ''}
                                 ${certDetails.keySize ? `<strong>Key Size:</strong> ${certDetails.keySize}<br>` : ''}
+                                ${getKeyMatchDisplay(cert)}
                             </div>
                             <div class="col-md-6">
                                 ${certDetails.issuerCN ? `<strong>Issued By:</strong> ${escapeHtml(certDetails.issuerCN)}<br>` : ''}
@@ -344,6 +345,29 @@ function showError(message) {
     
     errorMessage.textContent = message;
     showSection('errorSection');
+}
+
+function getKeyMatchDisplay(cert) {
+    if (!cert.keyMatch) {
+        return '';
+    }
+    
+    if (cert.type === "Private Key") {
+        if (cert.keyMatch.matched) {
+            return `<strong>Key Match:</strong> <span class="text-success">✓ Matches Certificate ${cert.keyMatch.certificateIndex}</span><br>`;
+        } else if (cert.keyMatch.error) {
+            return `<strong>Key Match:</strong> <span class="text-warning">⚠ Verification Error</span><br>`;
+        } else {
+            return `<strong>Key Match:</strong> <span class="text-danger">✗ No matching certificate found</span><br>`;
+        }
+    } else {
+        // For certificates
+        if (cert.keyMatch && cert.keyMatch.matched) {
+            return `<strong>Private Key:</strong> <span class="text-success">✓ Matches Private Key ${cert.keyMatch.privateKeyIndex}</span><br>`;
+        } else {
+            return `<strong>Private Key:</strong> <span class="text-muted">No matching private key</span><br>`;
+        }
+    }
 }
 
 function escapeHtml(text) {

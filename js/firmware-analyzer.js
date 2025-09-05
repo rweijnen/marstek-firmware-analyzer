@@ -340,6 +340,79 @@ class FirmwareAnalyzer {
     }
 
     /**
+     * Verify if private keys match their corresponding certificates
+     */
+    verifyPrivateKeyMatches() {
+        try {
+            // Check if node-forge is available
+            if (typeof forge === 'undefined') {
+                console.warn('node-forge not available, skipping key verification');
+                return;
+            }
+
+            const privateKeys = this.decryptedCerts.filter(cert => cert.type === "Private Key");
+            const certificates = this.decryptedCerts.filter(cert => cert.type !== "Private Key");
+            
+            for (const privKey of privateKeys) {
+                try {
+                    // Parse the private key
+                    const privateKeyPem = privKey.decrypted;
+                    const privateKey = forge.pki.privateKeyFromPem(privateKeyPem);
+                    
+                    // Find matching certificate by comparing public keys
+                    for (const cert of certificates) {
+                        try {
+                            const certPem = cert.decrypted;
+                            const certificate = forge.pki.certificateFromPem(certPem);
+                            
+                            // Compare the public key from certificate with private key
+                            const publicKeyFromCert = certificate.publicKey;
+                            
+                            // Check if private key matches public key (compare modulus for RSA)
+                            if (privateKey.n && publicKeyFromCert.n && 
+                                privateKey.n.equals(publicKeyFromCert.n)) {
+                                
+                                // Mark both as matching
+                                privKey.keyMatch = {
+                                    matched: true,
+                                    certificateIndex: cert.index,
+                                    certificateType: cert.type
+                                };
+                                cert.keyMatch = {
+                                    matched: true,
+                                    privateKeyIndex: privKey.index
+                                };
+                                
+                                console.log(`Private Key ${privKey.index} matches Certificate ${cert.index}`);
+                            }
+                        } catch (certError) {
+                            console.warn(`Error parsing certificate ${cert.index}:`, certError);
+                        }
+                    }
+                    
+                    // If no match found, mark as unmatched
+                    if (!privKey.keyMatch) {
+                        privKey.keyMatch = {
+                            matched: false,
+                            certificateIndex: null,
+                            certificateType: null
+                        };
+                    }
+                    
+                } catch (keyError) {
+                    console.warn(`Error parsing private key ${privKey.index}:`, keyError);
+                    privKey.keyMatch = {
+                        matched: false,
+                        error: keyError.message
+                    };
+                }
+            }
+        } catch (error) {
+            console.warn('Error during private key verification:', error);
+        }
+    }
+
+    /**
      * Get appropriate filename for certificate type
      */
     getFilename(certType, index) {
@@ -386,6 +459,10 @@ class FirmwareAnalyzer {
             // Step 6: Find AWS endpoints
             progressCallback(95, "Finding AWS IoT endpoints...");
             this.awsEndpoints = this.findAwsEndpoints(this.strings);
+            
+            // Step 7: Verify private key matches certificates
+            progressCallback(98, "Verifying private key matches...");
+            this.verifyPrivateKeyMatches();
             
             progressCallback(100, "Analysis complete!");
             
