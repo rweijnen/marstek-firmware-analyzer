@@ -103,6 +103,7 @@ function updateProgress(percentage, message) {
 
 function displayResults(results) {
     displaySummary(results.summary);
+    displayFirmwareInfo(results.firmwareInfo);
     displayAwsEndpoints(results.awsEndpoints);
     displayCertificates(results.certificates);
 }
@@ -120,8 +121,46 @@ function displaySummary(summary) {
                 <div class="stat-number">${summary.awsEndpointsFound}</div>
                 <div class="stat-label">AWS Endpoints Found</div>
             </div>
+            <div class="stat-item">
+                <div class="stat-number">${summary.firmwareVersion || 'N/A'}</div>
+                <div class="stat-label">Firmware Version</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">${summary.firmwareType || 'Unknown'}</div>
+                <div class="stat-label">Firmware Type</div>
+            </div>
         </div>
     `;
+}
+
+function displayFirmwareInfo(firmwareInfo) {
+    const firmwareSection = document.getElementById('firmwareSection');
+    
+    if (firmwareSection && firmwareInfo) {
+        let html = '<h6 class="mb-3">📋 Firmware Information</h6>';
+        
+        html += '<div class="firmware-info">';
+        html += `<div class="row">`;
+        html += `<div class="col-md-6">`;
+        html += `<strong>Type:</strong> ${firmwareInfo.type}<br>`;
+        html += `<strong>Version:</strong> ${firmwareInfo.version !== null ? firmwareInfo.version : 'Not found'}<br>`;
+        html += `</div>`;
+        html += `<div class="col-md-6">`;
+        if (firmwareInfo.buildDate) {
+            html += `<strong>Build Date:</strong> ${firmwareInfo.buildDate}<br>`;
+        }
+        if (firmwareInfo.buildTime) {
+            html += `<strong>Build Time:</strong> ${firmwareInfo.buildTime}<br>`;
+        }
+        if (firmwareInfo.checksum) {
+            html += `<strong>Checksum:</strong> <code>${firmwareInfo.checksum}</code><br>`;
+        }
+        html += `</div>`;
+        html += `</div>`;
+        html += '</div>';
+        
+        firmwareSection.innerHTML = html;
+    }
 }
 
 function displayAwsEndpoints(endpoints) {

@@ -592,6 +592,320 @@ class FirmwareAnalyzer {
     }
 
     /**
+     * Extract firmware version information using ARM Thumb-2 instruction analysis
+     */
+    extractFirmwareVersion(data) {
+        try {
+            // Initialize firmware info object
+            const firmwareInfo = {
+                type: "Unknown",
+                version: null,
+                buildDate: null,
+                buildTime: null,
+                checksum: null
+            };
+            
+            // Determine firmware type
+            const venusCPos = this.findInData(data, "VenusC");
+            firmwareInfo.type = venusCPos !== -1 ? "EMS/Control" : "BMS";
+            
+            // Find SOFT_VERSION string
+            const softVersionPos = this.findInData(data, "SOFT_VERSION");
+            if (softVersionPos === -1) {
+                console.warn("SOFT_VERSION string not found");
+                return firmwareInfo;
+            }
+            
+            // Extract version using ARM instruction patterns
+            const version = this.findVersionPatterns(data, softVersionPos);
+            firmwareInfo.version = version;
+            
+            // Extract build date and time
+            const { date, time } = this.extractDateTimeNearVersion(data, softVersionPos);
+            firmwareInfo.buildDate = date;
+            firmwareInfo.buildTime = time;
+            
+            // Calculate checksum
+            firmwareInfo.checksum = this.calculateFirmwareChecksum(data);
+            
+            return firmwareInfo;
+            
+        } catch (error) {
+            console.warn("Error extracting firmware version:", error);
+            return {
+                type: "Unknown",
+                version: null,
+                buildDate: null,
+                buildTime: null,
+                checksum: null
+            };
+        }
+    }
+    
+    /**
+     * Find byte pattern in data
+     */
+    findInData(data, searchString) {
+        const searchBytes = new TextEncoder().encode(searchString);
+        
+        for (let i = 0; i <= data.length - searchBytes.length; i++) {
+            let found = true;
+            for (let j = 0; j < searchBytes.length; j++) {
+                if (data[i + j] !== searchBytes[j]) {
+                    found = false;
+                    break;
+                }
+            }
+            if (found) return i;
+        }
+        return -1;
+    }
+    
+    /**
+     * Decode ARM Thumb-2 MOV instructions
+     */
+    decodeThumb2MovtMovw(data, offset) {
+        if (offset + 3 >= data.length) {
+            return { register: null, immediate: null, type: null };
+        }
+        
+        // Read as two 16-bit little-endian halfwords
+        const word1 = data[offset] | (data[offset + 1] << 8);
+        const word2 = data[offset + 2] | (data[offset + 3] << 8);
+        
+        // Check for MOV.W immediate (T2 encoding)
+        if ((word1 & 0xFBEF) === 0xF04F) {
+            const i = (word1 >> 10) & 1;
+            const s = (word1 >> 4) & 1;
+            const imm3 = (word2 >> 12) & 0x7;
+            const rd = (word2 >> 8) & 0xF;
+            const imm8 = word2 & 0xFF;
+            
+            // ThumbExpandImm(i:imm3:imm8)
+            const imm12 = (i << 11) | (imm3 << 8) | imm8;
+            
+            let immediate;
+            if ((imm12 & 0xC00) === 0) {
+                // Simple cases
+                if ((imm12 & 0x300) === 0x000) {
+                    immediate = imm8;
+                } else if ((imm12 & 0x300) === 0x100) {
+                    immediate = (imm8 << 16) | imm8;
+                } else if ((imm12 & 0x300) === 0x200) {
+                    immediate = (imm8 << 24) | (imm8 << 8);
+                } else { // 0x300
+                    immediate = (imm8 << 24) | (imm8 << 16) | (imm8 << 8) | imm8;
+                }
+            } else {
+                // Rotated form
+                const unrotatedValue = 0x80 | (imm8 & 0x7F);
+                const rotation = (imm12 >> 7) & 0x1F;
+                immediate = ((unrotatedValue >>> rotation) | (unrotatedValue << (32 - rotation))) >>> 0;
+            }
+            
+            return { register: rd, immediate: immediate, type: 'MOV.W' };
+        }
+        
+        // Check for MOVW (T3 encoding)
+        if ((word1 & 0xFB50) === 0xF040) {
+            const i = (word1 >> 10) & 1;
+            const imm4 = word1 & 0xF;
+            const imm3 = (word2 >> 12) & 0x7;
+            const rd = (word2 >> 8) & 0xF;
+            const imm8 = word2 & 0xFF;
+            
+            const immediate = (imm4 << 12) | (i << 11) | (imm3 << 8) | imm8;
+            return { register: rd, immediate: immediate, type: 'MOVW' };
+        }
+        
+        return { register: null, immediate: null, type: null };
+    }
+    
+    /**
+     * Find version patterns using ARM instruction analysis
+     */
+    findVersionPatterns(data, softVersionPos) {
+        const searchStart = Math.max(0, softVersionPos - 0x1000);
+        const searchEnd = softVersionPos;
+        
+        // Pattern 1: PUSH {R4,LR} + MOV.W/MOVW R1 + ADR R0
+        for (let offset = searchStart; offset < searchEnd - 8; offset++) {
+            if (data[offset] === 0x10 && data[offset + 1] === 0xB5) { // PUSH {R4,LR}
+                const movResult = this.decodeThumb2MovtMovw(data, offset + 2);
+                
+                if (movResult.register === 1 && movResult.immediate !== null) { // R1
+                    if (offset + 7 < data.length && data[offset + 7] === 0xA0) {
+                        const adrReg = (data[offset + 7] >> 0) & 0x7;
+                        
+                        if (adrReg === 0) { // R0
+                            const adrImm = data[offset + 6] & 0xFF;
+                            const adrPc = ((offset + 6 + 4) & ~3);
+                            
+                            // Try different base addresses
+                            for (const base of [0x08000000, 0x08020000, 0]) {
+                                const runtimePc = base + adrPc;
+                                const target = runtimePc + (adrImm * 4);
+                                const fileOffset = target - base;
+                                
+                                if (Math.abs(fileOffset - softVersionPos) < 50) {
+                                    return movResult.immediate;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Pattern 2: Just MOV.W/MOVW R1 + ADR R0 (no PUSH)
+        for (let offset = searchStart; offset < searchEnd - 6; offset++) {
+            const movResult = this.decodeThumb2MovtMovw(data, offset);
+            
+            if (movResult.register === 1 && movResult.immediate !== null) {
+                if (offset + 5 < data.length && data[offset + 5] === 0xA0) {
+                    const adrReg = (data[offset + 5] >> 0) & 0x7;
+                    
+                    if (adrReg === 0) {
+                        const adrImm = data[offset + 4] & 0xFF;
+                        const adrPc = ((offset + 4 + 4) & ~3);
+                        
+                        for (const base of [0x08000000, 0x08020000, 0]) {
+                            const runtimePc = base + adrPc;
+                            const target = runtimePc + (adrImm * 4);
+                            const fileOffset = target - base;
+                            
+                            if (Math.abs(fileOffset - softVersionPos) < 50) {
+                                return movResult.immediate;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Pattern 3: MOVS R1 + ADR R0 (8-bit immediate)
+        for (let offset = searchStart; offset < searchEnd - 4; offset++) {
+            if (offset + 1 < data.length && data[offset + 1] === 0x21) {
+                const immediate = data[offset];
+                
+                if (data[offset + 3] === 0xA0) {
+                    const adrImm = data[offset + 2];
+                    const adrPc = ((offset + 2 + 4) & ~3);
+                    
+                    for (const base of [0x08000000, 0x08020000, 0]) {
+                        const runtimePc = base + adrPc;
+                        const target = runtimePc + (adrImm * 4);
+                        const fileOffset = target - base;
+                        
+                        if (Math.abs(fileOffset - softVersionPos) < 50) {
+                            return immediate;
+                        }
+                    }
+                }
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Extract date and time strings near version
+     */
+    extractDateTimeNearVersion(data, versionOffset) {
+        const searchStart = versionOffset;
+        const searchEnd = Math.min(versionOffset + 200, data.length);
+        
+        // Look for " time:" string
+        const timeMarker = new TextEncoder().encode(" time:");
+        let timePos = -1;
+        
+        for (let i = searchStart; i <= searchEnd - timeMarker.length; i++) {
+            let found = true;
+            for (let j = 0; j < timeMarker.length; j++) {
+                if (data[i + j] !== timeMarker[j]) {
+                    found = false;
+                    break;
+                }
+            }
+            if (found) {
+                timePos = i;
+                break;
+            }
+        }
+        
+        if (timePos === -1) {
+            return { date: null, time: null };
+        }
+        
+        // Look for month names
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        
+        let dateStr = null;
+        let timeStr = null;
+        
+        for (const month of months) {
+            const monthBytes = new TextEncoder().encode(month);
+            let monthPos = -1;
+            
+            for (let i = timePos; i <= timePos + 50 - monthBytes.length; i++) {
+                let found = true;
+                for (let j = 0; j < monthBytes.length; j++) {
+                    if (data[i + j] !== monthBytes[j]) {
+                        found = false;
+                        break;
+                    }
+                }
+                if (found) {
+                    monthPos = i;
+                    break;
+                }
+            }
+            
+            if (monthPos !== -1) {
+                // Extract date string
+                let dateEnd = monthPos;
+                while (dateEnd < data.length && dateEnd < monthPos + 20 && data[dateEnd] !== 0) {
+                    dateEnd++;
+                }
+                
+                try {
+                    const dateBytes = data.slice(monthPos, dateEnd);
+                    dateStr = new TextDecoder('ascii').decode(dateBytes);
+                } catch (e) {
+                    // Ignore decode errors
+                }
+                
+                // Look for time string (HH:MM:SS pattern)
+                const timeSearch = data.slice(dateEnd, dateEnd + 20);
+                const timePattern = /\d{1,2}:\d{2}:\d{2}/;
+                const timeSearchStr = new TextDecoder('ascii', { fatal: false }).decode(timeSearch);
+                const timeMatch = timeSearchStr.match(timePattern);
+                
+                if (timeMatch) {
+                    timeStr = timeMatch[0];
+                }
+                
+                break;
+            }
+        }
+        
+        return { date: dateStr, time: timeStr };
+    }
+    
+    /**
+     * Calculate firmware checksum
+     */
+    calculateFirmwareChecksum(data) {
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+            sum = (sum + data[i]) >>> 0; // Keep as 32-bit unsigned
+        }
+        const checksum = (~sum) >>> 0; // Bitwise NOT and keep as 32-bit unsigned
+        return `0x${checksum.toString(16).toUpperCase().padStart(8, '0')}`;
+    }
+
+    /**
      * Get appropriate filename for certificate type
      */
     getFilename(certType, index) {
@@ -647,14 +961,21 @@ class FirmwareAnalyzer {
             progressCallback(99, "Analyzing certificate chain...");
             this.analyzeCertificateChain();
             
+            // Step 9: Extract firmware version information
+            progressCallback(99.5, "Extracting firmware version...");
+            this.firmwareInfo = this.extractFirmwareVersion(new Uint8Array(fileData));
+            
             progressCallback(100, "Analysis complete!");
             
             return {
                 certificates: this.decryptedCerts,
                 awsEndpoints: this.awsEndpoints,
+                firmwareInfo: this.firmwareInfo,
                 summary: {
                     certificatesFound: this.decryptedCerts.length,
-                    awsEndpointsFound: this.awsEndpoints.length
+                    awsEndpointsFound: this.awsEndpoints.length,
+                    firmwareVersion: this.firmwareInfo.version,
+                    firmwareType: this.firmwareInfo.type
                 }
             };
             
