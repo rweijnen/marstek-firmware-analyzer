@@ -116,40 +116,46 @@ class FirmwareAnalyzer {
     /**
      * Try to decrypt Base64 data with given AES key using ECB mode
      */
-    async decryptWithKey(encryptedBase64, keyBytes) {
+    decryptWithKey(encryptedBase64, keyBytes) {
         try {
+            // Check if CryptoJS is available
+            if (typeof CryptoJS === 'undefined') {
+                console.error('CryptoJS library not loaded');
+                return null;
+            }
+            
             // Add padding to base64 if needed
             const paddedBase64 = encryptedBase64 + '='.repeat((4 - encryptedBase64.length % 4) % 4);
             
-            // Decode Base64 to ArrayBuffer
-            const binaryString = atob(paddedBase64);
-            const ciphertext = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                ciphertext[i] = binaryString.charCodeAt(i);
+            // Convert key bytes to CryptoJS format
+            const keyHex = Array.from(keyBytes, byte => byte.toString(16).padStart(2, '0')).join('');
+            const key = CryptoJS.enc.Hex.parse(keyHex);
+            
+            // Parse the Base64 ciphertext
+            const ciphertext = CryptoJS.enc.Base64.parse(paddedBase64);
+            
+            // Decrypt using AES-ECB
+            const decrypted = CryptoJS.AES.decrypt(
+                { ciphertext: ciphertext }, 
+                key, 
+                { 
+                    mode: CryptoJS.mode.ECB,
+                    padding: CryptoJS.pad.NoPadding
+                }
+            );
+            
+            // Convert to Uint8Array
+            const decryptedHex = decrypted.toString(CryptoJS.enc.Hex);
+            if (!decryptedHex) return null;
+            
+            const result = new Uint8Array(decryptedHex.length / 2);
+            for (let i = 0; i < decryptedHex.length; i += 2) {
+                result[i / 2] = parseInt(decryptedHex.substr(i, 2), 16);
             }
             
-            // Ensure length is multiple of 16 for AES
-            const alignedLen = Math.floor(ciphertext.length / 16) * 16;
-            const ctAligned = ciphertext.slice(0, alignedLen);
-            
-            // Import key for Web Crypto API
-            const key = await crypto.subtle.importKey(
-                'raw',
-                keyBytes,
-                { name: 'AES-ECB' },
-                false,
-                ['decrypt']
-            );
-            
-            // Decrypt
-            const plaintext = await crypto.subtle.decrypt(
-                { name: 'AES-ECB' },
-                key,
-                ctAligned
-            );
-            
-            return new Uint8Array(plaintext);
+            return result;
         } catch (error) {
+            console.warn('Decryption error:', error);
             return null;
         }
     }
@@ -157,7 +163,7 @@ class FirmwareAnalyzer {
     /**
      * Brute force the AES key
      */
-    async bruteForceKey(certificateData, progressCallback) {
+    bruteForceKey(certificateData, progressCallback) {
         const totalCombinations = this.keyCandidates.length * 94;
         let testCount = 0;
         
@@ -192,7 +198,7 @@ class FirmwareAnalyzer {
                 }
                 
                 // Try to decrypt
-                const decrypted = await this.decryptWithKey(certificateData, keyBytes);
+                const decrypted = this.decryptWithKey(certificateData, keyBytes);
                 if (decrypted) {
                     // Check if it contains certificate markers
                     const decryptedStr = new TextDecoder('utf-8', { fatal: false }).decode(decrypted);
@@ -215,7 +221,7 @@ class FirmwareAnalyzer {
     /**
      * Decrypt all certificates with the found key
      */
-    async decryptAllCertificates(key, progressCallback) {
+    decryptAllCertificates(key, progressCallback) {
         const results = [];
         const keyBytes = new Uint8Array(16);
         
@@ -233,7 +239,7 @@ class FirmwareAnalyzer {
                            `Decrypting certificate ${i + 1}/${this.certificates.length}...`);
             
             const cert = this.certificates[i];
-            const decrypted = await this.decryptWithKey(cert.data, keyBytes);
+            const decrypted = this.decryptWithKey(cert.data, keyBytes);
             
             if (decrypted) {
                 const decryptedStr = new TextDecoder('utf-8', { fatal: false }).decode(decrypted);
@@ -315,7 +321,7 @@ class FirmwareAnalyzer {
     /**
      * Main analysis function
      */
-    async analyze(fileData, progressCallback) {
+    analyze(fileData, progressCallback) {
         try {
             // Step 1: Extract strings
             progressCallback(5, "Extracting strings...");
@@ -334,14 +340,14 @@ class FirmwareAnalyzer {
             this.keyCandidates = this.generateKeyCandidates(this.strings);
             
             // Step 4: Brute force key
-            const keyResult = await this.bruteForceKey(this.certificates[0].data, progressCallback);
+            const keyResult = this.bruteForceKey(this.certificates[0].data, progressCallback);
             if (!keyResult) {
                 throw new Error("Could not find working AES key");
             }
             this.workingKey = keyResult.key;
             
             // Step 5: Decrypt all certificates
-            this.decryptedCerts = await this.decryptAllCertificates(this.workingKey, progressCallback);
+            this.decryptedCerts = this.decryptAllCertificates(this.workingKey, progressCallback);
             
             // Step 6: Find AWS endpoints
             progressCallback(95, "Finding AWS IoT endpoints...");

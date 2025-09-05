@@ -61,7 +61,7 @@ async function analyzeFirmware(file) {
         const fileData = await readFileAsArrayBuffer(file);
         
         // Run analysis with progress updates
-        analysisResults = await analyzer.analyze(fileData, updateProgress);
+        analysisResults = analyzer.analyze(fileData, updateProgress);
         
         // Display results
         displayResults(analysisResults);
