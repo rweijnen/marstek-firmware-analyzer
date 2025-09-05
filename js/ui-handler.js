@@ -61,7 +61,7 @@ async function analyzeFirmware(file) {
         const fileData = await readFileAsArrayBuffer(file);
         
         // Run analysis with progress updates
-        analysisResults = analyzer.analyze(fileData, updateProgress);
+        analysisResults = await analyzer.analyze(fileData, updateProgress);
         
         // Display results
         displayResults(analysisResults);
@@ -166,16 +166,28 @@ function displayCertificates(certificates) {
                             <div class="col-md-6">
                                 <strong>Type:</strong> ${cert.type}<br>
                                 <strong>Offset:</strong> 0x${cert.offset.toString(16).toUpperCase().padStart(8, '0')}<br>
-                                ${certDetails.subject ? `<strong>Subject:</strong> ${escapeHtml(certDetails.subject)}<br>` : ''}
-                                ${certDetails.issuer ? `<strong>Issuer:</strong> ${escapeHtml(certDetails.issuer)}<br>` : ''}
+                                ${certDetails.commonName ? `<strong>Common Name (CN):</strong> ${escapeHtml(certDetails.commonName)}<br>` : ''}
+                                ${certDetails.organization ? `<strong>Organization:</strong> ${escapeHtml(certDetails.organization)}<br>` : ''}
+                                ${certDetails.country ? `<strong>Country:</strong> ${escapeHtml(certDetails.country)}<br>` : ''}
+                                ${certDetails.keySize ? `<strong>Key Size:</strong> ${certDetails.keySize}<br>` : ''}
                             </div>
                             <div class="col-md-6">
+                                ${certDetails.issuerCN ? `<strong>Issued By:</strong> ${escapeHtml(certDetails.issuerCN)}<br>` : ''}
                                 ${certDetails.validFrom ? `<strong>Valid From:</strong> ${certDetails.validFrom}<br>` : ''}
                                 ${certDetails.validTo ? `<strong>Valid To:</strong> ${certDetails.validTo}<br>` : ''}
-                                ${certDetails.keySize ? `<strong>Key Size:</strong> ${certDetails.keySize}<br>` : ''}
-                                ${certDetails.serialNumber ? `<strong>Serial:</strong> ${certDetails.serialNumber.substring(0, 20)}...<br>` : ''}
+                                ${certDetails.serialNumber ? `<strong>Serial:</strong> ${certDetails.serialNumber.length > 30 ? certDetails.serialNumber.substring(0, 30) + '...' : certDetails.serialNumber}<br>` : ''}
                             </div>
                         </div>
+                        ${certDetails.subject ? `
+                        <div class="mt-2">
+                            <strong>Full Subject:</strong><br>
+                            <small class="text-muted">${escapeHtml(certDetails.subject)}</small>
+                        </div>` : ''}
+                        ${certDetails.issuer ? `
+                        <div class="mt-1">
+                            <strong>Full Issuer:</strong><br>
+                            <small class="text-muted">${escapeHtml(certDetails.issuer)}</small>
+                        </div>` : ''}
                     </div>
                 </div>
             `;
@@ -188,28 +200,81 @@ function displayCertificates(certificates) {
 }
 
 function parseCertificateDetails(pemData) {
+    // First try with node-forge if available
+    if (typeof parseX509Certificate === 'function') {
+        try {
+            const forgeDetails = parseX509Certificate(pemData);
+            if (forgeDetails && Object.keys(forgeDetails).length > 0) {
+                return forgeDetails;
+            }
+        } catch (error) {
+            console.warn('node-forge parsing failed, falling back to regex:', error);
+        }
+    }
+    
     const details = {};
     
     try {
         if (pemData.includes('BEGIN CERTIFICATE')) {
-            // Extract basic info from PEM data using regex
-            const subjectMatch = pemData.match(/Subject:([^\n]+)/);
-            const issuerMatch = pemData.match(/Issuer:([^\n]+)/);
-            const validFromMatch = pemData.match(/Not Before:\s*([^\n]+)/);
-            const validToMatch = pemData.match(/Not After:\s*([^\n]+)/);
-            const serialMatch = pemData.match(/Serial Number:\s*([^\n]+)/);
+            // Extract basic info from PEM data using more comprehensive regex
+            const subjectMatch = pemData.match(/Subject:\s*([^\n\r]+)/);
+            const issuerMatch = pemData.match(/Issuer:\s*([^\n\r]+)/);
+            const validFromMatch = pemData.match(/Not Before:\s*([^\n\r]+)/);
+            const validToMatch = pemData.match(/Not After:\s*([^\n\r]+)/);
+            const serialMatch = pemData.match(/Serial Number:\s*([^\n\r]+)/);
             
-            if (subjectMatch) details.subject = subjectMatch[1].trim();
-            if (issuerMatch) details.issuer = issuerMatch[1].trim();
+            if (subjectMatch) {
+                details.subject = subjectMatch[1].trim();
+                // Extract CN from subject
+                const cnMatch = details.subject.match(/CN\s*=\s*([^,\n\r]+)/i);
+                if (cnMatch) {
+                    details.commonName = cnMatch[1].trim();
+                }
+            }
+            
+            if (issuerMatch) {
+                details.issuer = issuerMatch[1].trim();
+                // Extract issuer CN
+                const issuerCnMatch = details.issuer.match(/CN\s*=\s*([^,\n\r]+)/i);
+                if (issuerCnMatch) {
+                    details.issuerCN = issuerCnMatch[1].trim();
+                }
+            }
+            
             if (validFromMatch) details.validFrom = validFromMatch[1].trim();
             if (validToMatch) details.validTo = validToMatch[1].trim();
             if (serialMatch) details.serialNumber = serialMatch[1].trim();
             
-            // Try to determine key size (this is a simplified approach)
+            // Try to determine key size
             if (pemData.includes('2048 bit') || pemData.includes('RSA-2048')) {
                 details.keySize = '2048 bits';
             } else if (pemData.includes('4096 bit') || pemData.includes('RSA-4096')) {
                 details.keySize = '4096 bits';
+            } else if (pemData.includes('1024 bit') || pemData.includes('RSA-1024')) {
+                details.keySize = '1024 bits';
+            }
+            
+            // Try to extract more fields
+            const organizationMatch = details.subject?.match(/O\s*=\s*([^,\n\r]+)/i);
+            if (organizationMatch) {
+                details.organization = organizationMatch[1].trim();
+            }
+            
+            const countryMatch = details.subject?.match(/C\s*=\s*([^,\n\r]+)/i);
+            if (countryMatch) {
+                details.country = countryMatch[1].trim();
+            }
+            
+        } else if (pemData.includes('BEGIN RSA PRIVATE KEY') || pemData.includes('BEGIN PRIVATE KEY')) {
+            details.type = 'RSA Private Key';
+            
+            // Try to determine key size for private keys
+            if (pemData.includes('2048 bit') || pemData.length > 1600) {
+                details.keySize = '2048 bits';
+            } else if (pemData.includes('4096 bit') || pemData.length > 3000) {
+                details.keySize = '4096 bits';
+            } else if (pemData.includes('1024 bit')) {
+                details.keySize = '1024 bits';
             }
         }
     } catch (error) {

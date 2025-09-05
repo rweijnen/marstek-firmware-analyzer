@@ -161,9 +161,9 @@ class FirmwareAnalyzer {
     }
 
     /**
-     * Brute force the AES key
+     * Brute force the AES key (now async to allow UI updates)
      */
-    bruteForceKey(certificateData, progressCallback) {
+    async bruteForceKey(certificateData, progressCallback) {
         const totalCombinations = this.keyCandidates.length * 94;
         let testCount = 0;
         
@@ -172,10 +172,12 @@ class FirmwareAnalyzer {
         for (let i = 0; i < this.keyCandidates.length; i++) {
             const candidate = this.keyCandidates[i];
             
-            // Update progress every 100 candidates
-            if (i % 100 === 0) {
+            // Update progress and yield control every 50 candidates
+            if (i % 50 === 0) {
                 const progress = 10 + (i / this.keyCandidates.length) * 70;
                 progressCallback(progress, `Progress: ${i}/${this.keyCandidates.length} candidates...`);
+                // Yield control to UI thread
+                await new Promise(resolve => setTimeout(resolve, 0));
             }
             
             // Test shifts from -47 to +47 (covers full printable range)
@@ -211,6 +213,11 @@ class FirmwareAnalyzer {
                         progressCallback(80, `SUCCESS! Found working key after ${testCount} attempts`);
                         return { key: shiftedKey, shift: shift };
                     }
+                }
+                
+                // Yield control periodically during shift testing
+                if (testCount % 1000 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
                 }
             }
         }
@@ -321,7 +328,7 @@ class FirmwareAnalyzer {
     /**
      * Main analysis function
      */
-    analyze(fileData, progressCallback) {
+    async analyze(fileData, progressCallback) {
         try {
             // Step 1: Extract strings
             progressCallback(5, "Extracting strings...");
@@ -340,7 +347,7 @@ class FirmwareAnalyzer {
             this.keyCandidates = this.generateKeyCandidates(this.strings);
             
             // Step 4: Brute force key
-            const keyResult = this.bruteForceKey(this.certificates[0].data, progressCallback);
+            const keyResult = await this.bruteForceKey(this.certificates[0].data, progressCallback);
             if (!keyResult) {
                 throw new Error("Could not find working AES key");
             }
