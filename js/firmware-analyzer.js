@@ -262,19 +262,28 @@ class FirmwareAnalyzer {
                         const subject = subjectMatch[1].trim();
                         const issuer = issuerMatch[1].trim();
                         
-                        // Check if it's a Root CA (self-signed: Subject = Issuer)
-                        if (subject === issuer && (subject.includes("Root CA") || subject.includes("Amazon Root CA"))) {
+                        // Normalize whitespace for comparison
+                        const normalizedSubject = subject.replace(/\s+/g, ' ').trim();
+                        const normalizedIssuer = issuer.replace(/\s+/g, ' ').trim();
+                        
+                        // Check if subject contains Root CA patterns
+                        const isRootCA = subject.includes("Root CA") || subject.includes("Amazon Root CA");
+                        
+                        // Check if it's self-signed (Subject = Issuer) 
+                        const isSelfSigned = normalizedSubject === normalizedIssuer;
+                        
+                        if (isRootCA || (isSelfSigned && subject.includes("Amazon"))) {
                             certType = "Root CA Certificate";
                         }
-                        // Check if it's an Amazon Root CA even if not self-signed
-                        else if (subject.includes("Amazon Root CA") || subject.includes("Root CA")) {
-                            certType = "Root CA Certificate"; 
-                        }
                         // Check for device certificates
-                        else if (subject.includes("amazonaws.com") || subject.includes("iot.")) {
+                        else if (subject.includes("amazonaws.com") || subject.includes("iot.") || subject.includes("AWS IoT")) {
                             certType = "Device Certificate";
                         }
-                        // Default to device certificate for other certs
+                        // Default based on issuer if subject is unclear
+                        else if (issuer.includes("Amazon Web Services") || issuer.includes("Amazon")) {
+                            certType = "Device Certificate";
+                        }
+                        // Final default
                         else {
                             certType = "Device Certificate";
                         }
