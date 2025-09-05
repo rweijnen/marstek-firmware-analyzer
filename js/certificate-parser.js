@@ -22,6 +22,17 @@ function parseX509Certificate(pemData) {
         if (cleanPem.includes('BEGIN CERTIFICATE')) {
             const cert = forge.pki.certificateFromPem(cleanPem);
             
+            // Calculate thumbprint (SHA-1 hash of the certificate)
+            let thumbprint = null;
+            try {
+                const certDer = forge.asn1.toDer(forge.pki.certificateToAsn1(cert));
+                const sha1 = forge.md.sha1.create();
+                sha1.update(certDer.getBytes());
+                thumbprint = sha1.digest().toHex().toUpperCase().replace(/(.{2})/g, '$1:').slice(0, -1);
+            } catch (e) {
+                console.warn('Error calculating thumbprint:', e);
+            }
+            
             return {
                 subject: cert.subject.attributes.map(attr => `${attr.shortName}=${attr.value}`).join(', '),
                 issuer: cert.issuer.attributes.map(attr => `${attr.shortName}=${attr.value}`).join(', '),
@@ -30,6 +41,7 @@ function parseX509Certificate(pemData) {
                 validTo: cert.validity.notAfter.toISOString().split('T')[0],
                 keySize: cert.publicKey.n ? cert.publicKey.n.bitLength() + ' bits' : 'Unknown',
                 signatureAlgorithm: cert.siginfo ? cert.siginfo.algorithmOid : 'Unknown',
+                thumbprint: thumbprint,
                 extensions: cert.extensions.map(ext => ({
                     name: ext.name || ext.id,
                     critical: ext.critical

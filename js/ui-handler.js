@@ -215,7 +215,8 @@ function displayCertificates(certificates) {
                                 ${certDetails.issuerCN ? `<strong>Issued By:</strong> ${escapeHtml(certDetails.issuerCN)}<br>` : ''}
                                 ${certDetails.validFrom ? `<strong>Valid From:</strong> ${certDetails.validFrom}<br>` : ''}
                                 ${certDetails.validTo ? `<strong>Valid To:</strong> ${certDetails.validTo}<br>` : ''}
-                                ${certDetails.serialNumber ? `<strong>Serial:</strong> ${certDetails.serialNumber.length > 30 ? certDetails.serialNumber.substring(0, 30) + '...' : certDetails.serialNumber}<br>` : ''}
+                                ${certDetails.serialNumber ? `<strong>Serial Number:</strong><br><small class="font-monospace text-break">${certDetails.serialNumber}</small><br>` : ''}
+                                ${certDetails.thumbprint ? `<strong>Thumbprint (SHA-1):</strong><br><small class="font-monospace text-break">${certDetails.thumbprint}</small><br>` : ''}
                             </div>
                         </div>
                         ${certDetails.subject ? `
@@ -283,7 +284,11 @@ function parseCertificateDetails(pemData) {
             
             if (validFromMatch) details.validFrom = validFromMatch[1].trim();
             if (validToMatch) details.validTo = validToMatch[1].trim();
-            if (serialMatch) details.serialNumber = serialMatch[1].trim();
+            if (serialMatch) {
+                details.serialNumber = serialMatch[1].trim();
+                // Remove any extra whitespace or formatting from serial number
+                details.serialNumber = details.serialNumber.replace(/\s+/g, '').replace(/:/g, '');
+            }
             
             // Try to determine key size
             if (pemData.includes('2048 bit') || pemData.includes('RSA-2048')) {
